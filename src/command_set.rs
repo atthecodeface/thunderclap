@@ -22,8 +22,8 @@ pub struct CommandSet<C: CommandArgs> {
     batch_command: Command,
     handler_set: CommandHandlerSet<C>,
     cmd_stack: Vec<(String, Option<usize>)>,
-    variables: HashMap<String, Rc<String>>,
-    result_history: Vec<Rc<String>>,
+    variables: HashMap<String, Rc<C::Value>>,
+    result_history: Vec<Rc<C::Value>>,
     use_builtins: bool,
     show_result: bool,
 }
@@ -172,7 +172,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &self,
         _cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         let mut file = {
             if let Some(filename) = matches.get_one::<String>("file") {
                 let mut options = std::fs::File::options();
@@ -199,7 +199,16 @@ impl<C: CommandArgs> CommandSet<C> {
                 println!("{v}");
             }
         }
-        Ok("".into())
+        C::cmd_ok()
+    }
+
+    //mi set_variable_value_str
+    fn set_variable_value_str(&mut self, k: &str, v: &str) -> Result<(), C::Error> {
+        self.variables.insert(
+            k.into(),
+            Rc::new(C::Value::from_str(v).map_err(|e| e.to_string())?),
+        );
+        Ok(())
     }
 
     //mi handle_builtin_set
@@ -207,13 +216,15 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         let k = matches.get_one::<String>("key").unwrap();
         let v = matches.get_one::<String>("value").unwrap();
+
+        // If the client does not handle the 'set' then set a local variable
         if !cmd_args.value_set(k, v)? {
-            self.variables.insert(k.into(), Rc::new(v.into()));
+            self.set_variable_value_str(k, v);
         }
-        Ok("".into())
+        C::cmd_ok()
     }
 
     //mi handle_builtin_show
@@ -221,7 +232,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         if let Some(keys) = matches.get_many::<String>("key") {
             for k in keys {
                 let Some(v) = cmd_args.value_str(k) else {
@@ -231,15 +242,14 @@ impl<C: CommandArgs> CommandSet<C> {
                 };
                 println!("{k:20}: {v}");
             }
-            Ok("".into())
         } else {
             for k in cmd_args.keys() {
                 if let Some(v) = cmd_args.value_str(k) {
                     println!("{k:20}: {v}");
                 }
             }
-            Ok("".into())
         }
+        C::cmd_ok()
     }
 
     //mi handle_builtin_stack_show
@@ -247,11 +257,11 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         for (i, v) in self.result_history.iter().rev().enumerate() {
-            println!("{i:4} : {v}");
+            println!("{i:4} : {}", v.value_string());
         }
-        Ok("".into())
+        C::cmd_ok()
     }
 
     //mi handle_builtin_stack_clear
@@ -259,11 +269,11 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         if self.result_history.len() > 1 {
             let _ = self.result_history.drain(1..);
         }
-        Ok("".into())
+        C::cmd_ok()
     }
 
     //mi handle_builtin_stack_pop
@@ -271,7 +281,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         if self.result_history.len() > 1 {
             Ok(Rc::into_inner(self.result_history.remove(1)).unwrap())
         } else {
@@ -284,13 +294,14 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<String, C::Error> {
+    ) -> Result<C::Value, C::Error> {
         if let Some(values) = matches.get_many::<String>("values") {
             if !self.result_history.is_empty() {
                 self.result_history.pop();
             }
             for v in values {
-                self.result_history.push(Rc::new(v.to_owned()));
+                self.result_history
+                    .push(Rc::new(C::Value::from_str(v).map_err(|e| e.to_string())?));
             }
             if !self.result_history.is_empty() {
                 self.result_history
@@ -300,7 +311,7 @@ impl<C: CommandArgs> CommandSet<C> {
             self.result_history
                 .push(self.result_history.last().unwrap().clone());
         }
-        Ok("".into())
+        C::cmd_ok()
     }
 
     //mi handle_builtins
@@ -308,7 +319,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<Option<String>, C::Error> {
+    ) -> Result<Option<C::Value>, C::Error> {
         match matches.subcommand_name() {
             Some("echo") => self
                 .handle_builtin_echo(cmd_args, matches.subcommand().unwrap().1)
@@ -358,13 +369,13 @@ impl<C: CommandArgs> CommandSet<C> {
             }
             if let Some((name, rest)) = chars.as_str().split_once('}') {
                 if let Some(v) = self.variables.get(name) {
-                    result += v;
+                    result += &v.value_string();
                 } else if let Some(v) = cmd_args.value_str(name) {
                     result += &v;
                 } else if let Ok(v) = name.parse::<usize>() {
                     let n = self.result_history.len();
                     if v < n {
-                        result += &self.result_history[n - 1 - v];
+                        result += &self.result_history[n - 1 - v].value_string();
                     }
                 } else {
                     return Err(format!("Failed to evaulate ${{{name}}}").into());
@@ -458,8 +469,8 @@ impl<C: CommandArgs> CommandSet<C> {
     }
 
     //mi executed_result
-    fn executed_result(&mut self, result: String) {
-        if !result.is_empty() {
+    fn executed_result(&mut self, result: C::Value) {
+        if !result.is_none() {
             if !self.result_history.is_empty() {
                 self.result_history.pop();
             }
@@ -611,7 +622,7 @@ impl<C: CommandArgs> CommandSet<C> {
             .push((cmd_name.to_str().unwrap().into(), None));
         self.variables.clear();
         for (k, v) in std::env::vars() {
-            self.variables.insert(k, Rc::new(v));
+            self.set_variable_value_str(&k, &v)?;
         }
         match self.execute(cmd_args, iter, false) {
             Err(e) => {
@@ -621,15 +632,15 @@ impl<C: CommandArgs> CommandSet<C> {
             _x => {
                 let result = {
                     if self.result_history.is_empty() {
-                        "".into()
+                        C::Value::from_str("").map_err(|e| e.to_string())?
                     } else {
                         Rc::into_inner(self.result_history.remove(0)).unwrap()
                     }
                 };
                 if self.show_result {
-                    println!("{result}");
+                    println!("{}", result.value_string());
                 }
-                Ok(result)
+                Ok(result.value_string())
             }
         }
     }

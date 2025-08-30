@@ -9,41 +9,67 @@ use clap::ArgMatches;
 pub trait CommandArgsValue: std::default::Default {
     const CAN_INDEX: bool;
     const CAN_GET: bool;
+    type FromStrError: std::fmt::Display;
     fn value_string(&self) -> String;
-    fn index(&self, n: usize) -> Option<Self> {
+    /// Return true if the value is effectively 'NULL', so should not be pusehd to the result stack
+    fn is_none(&self) -> bool;
+    fn from_str(s: &str) -> Result<Self, Self::FromStrError>;
+    fn index(&self, _n: usize) -> Option<Self> {
         None
     }
-    fn get(&self, s: &str) -> Option<Self> {
+    fn get(&self, _s: &str) -> Option<Self> {
         None
     }
 }
 
+//ip CommandArgsValue for JsonValue
+//
+// #[cfg(feature = "serde_json")]
+// use serde_json::Value as JsonValue;
+
+//ip CommandArgsValue for ()
 impl CommandArgsValue for () {
     const CAN_INDEX: bool = false;
     const CAN_GET: bool = false;
+    type FromStrError = &'static str;
+    fn is_none(&self) -> bool {
+        true
+    }
+    fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
+        Ok(())
+    }
     fn value_string(&self) -> String {
         "".into()
     }
 }
 
+//mi command_args_value
 macro_rules! command_args_value {
     {$t:ty} => {
         impl $crate :: CommandArgsValue for $t {
             const CAN_INDEX: bool = false;
             const CAN_GET: bool = false;
+            type FromStrError = <$t as std::str::FromStr>::Err;
+            fn is_none(&self) -> bool { false }
+            fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
+                <Self as std::str::FromStr>::from_str(s)
+            }
             fn value_string(&self) -> String { std::string::ToString::to_string(self) }
         }
     };
 }
 
+//ip CommandArgsValue for String
 command_args_value! {String}
 
+//ip CommandArgsValue for u8 to usize
 command_args_value! {usize}
 command_args_value! {u64}
 command_args_value! {u32}
 command_args_value! {u16}
 command_args_value! {u8}
 
+//ip CommandArgsValue for i8 to isize
 command_args_value! {isize}
 command_args_value! {i64}
 command_args_value! {i32}
@@ -63,7 +89,9 @@ pub trait CommandArgs: 'static {
     /// Value type returned by commands
     type Value: CommandArgsValue;
 
-    fn cmd_ok() -> Result<Self::Value, Self::Error>;
+    fn cmd_ok() -> Result<Self::Value, Self::Error> {
+        Ok(Self::Value::default())
+    }
 
     /// Function invoked before every batch or interactive command to reset temporary options
     fn reset_args(&mut self) {}

@@ -1,18 +1,19 @@
+//!
+//! JsonValue implements
+//!
+//! JsonValue::to_string()
+//!
+//! pub fn from_value<T>(value: Value) -> Result<T, Error>
+//!    where T: DeserializeOwned,
+//!
+//! pub fn to_value<T>(value: T) -> Result<Value, Error>
+//! where T: Serialize,
+
 use crate::CommandArgsValue;
 
 pub use serde_json::from_value;
 pub use serde_json::to_value;
 pub use serde_json::Value;
-///
-/// JsonValue implements
-///
-/// JsonValue::to_string()
-///
-/// pub fn from_value<T>(value: Value) -> Result<T, Error>
-///    where T: DeserializeOwned,
-///
-/// pub fn to_value<T>(value: T) -> Result<Value, Error>
-/// where T: Serialize,
 
 //ip CommandArgsValue for Value
 impl CommandArgsValue for Value {
@@ -29,18 +30,35 @@ impl CommandArgsValue for Value {
         serde_json::to_string(self).unwrap()
     }
     fn is_array(&self) -> bool {
-        self.is_array()
+        mod x {
+            pub(super) fn is_array(v: &super::Value) -> bool {
+                v.is_array()
+            }
+        }
+        x::is_array(self)
     }
     fn is_map(&self) -> bool {
-        self.is_map()
+        mod x {
+            pub(super) fn is_map(v: &super::Value) -> bool {
+                v.is_map()
+            }
+        }
+        x::is_map(self)
+    }
+    fn is_empty(&self) -> bool {
+        if let Some(array) = self.as_array() {
+            array.is_empty()
+        } else if let Some(obj) = self.as_object() {
+            obj.is_empty()
+        } else {
+            true
+        }
     }
     fn len(&self) -> Option<usize> {
         if let Some(array) = self.as_array() {
             Some(array.len())
-        } else if let Some(obj) = self.as_object() {
-            Some(obj.len())
         } else {
-            None
+            self.as_object().map(|obj| obj.len())
         }
     }
     fn index(&self, n: usize) -> Option<Self> {
@@ -52,7 +70,7 @@ impl CommandArgsValue for Value {
     }
     fn key(&self, n: usize) -> Option<&str> {
         if let Some(obj) = self.as_object() {
-            obj.keys().skip(n).next().map(|x| x.as_str())
+            obj.keys().nth(n).map(|x| x.as_str())
         } else {
             None
         }

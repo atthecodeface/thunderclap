@@ -16,6 +16,9 @@ pub trait CommandArgsValue: std::default::Default {
     /// Return true if the value is effectively 'NULL', so should not be pusehd to the result stack
     fn is_none(&self) -> bool;
     fn from_str(s: &str) -> Result<Self, Self::FromStrError>;
+    fn is_empty(&self) -> bool {
+        true
+    }
     fn len(&self) -> Option<usize> {
         None
     }
@@ -44,7 +47,8 @@ impl CommandArgsValue for () {
     fn is_none(&self) -> bool {
         true
     }
-    fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
+
+    fn from_str(_s: &str) -> Result<Self, Self::FromStrError> {
         Ok(())
     }
     fn value_string(&self) -> String {
@@ -90,7 +94,6 @@ command_args_value! {i8}
 ///
 /// This should be implemented by a type that is used to hold and
 /// build the arguments for the execution of commands
-
 pub trait CommandArgs: 'static {
     /// Error type returned as an error by all [ArgFn] and [CommandFn]
     type Error: std::convert::From<String> + std::fmt::Display;

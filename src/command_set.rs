@@ -356,13 +356,13 @@ impl<C: CommandArgs> CommandSet<C> {
         cmd_args: &C,
         s: &'a str,
     ) -> Result<(&'a str, Option<Rc<C::Value>>), C::Error> {
-        if s.as_bytes().is_empty() || s.as_bytes()[0] != b'{' {
+        if s.is_empty() || s.as_bytes()[0] != b'{' {
             return Ok((s, None));
         }
         let Some((name, rest)) = s.split_at(1).1.split_once('}') else {
             return Err(format!("Bad variable specification - no closing '}}'").into());
         };
-        let value = {
+        let mut value = {
             if let Some(v) = self.variables.get(name) {
                 v.clone()
             } else if let Some(v) = cmd_args.value_str(name) {
@@ -379,7 +379,7 @@ impl<C: CommandArgs> CommandSet<C> {
         };
         let mut rest = rest;
         while (C::Value::CAN_GET || C::Value::CAN_INDEX) && !rest.is_empty() {
-            let value = {
+            value = {
                 if rest.as_bytes()[0] == b'[' {
                     let Some((index, new_rest)) = rest.split_at(1).1.split_once(']') else {
                         return Err(format!(
@@ -530,9 +530,9 @@ impl<C: CommandArgs> CommandSet<C> {
         cmd_args: &mut C,
         matches: &ArgMatches,
     ) -> Result<(), C::Error> {
-        self.handler_set.handle_args(self, cmd_args, &matches)?;
+        self.handler_set.handle_args(self, cmd_args, matches)?;
         if self.use_builtins {
-            if let Some(result) = self.handle_builtins(cmd_args, &matches)? {
+            if let Some(result) = self.handle_builtins(cmd_args, matches)? {
                 self.executed_result(result);
                 return Ok(());
             }
@@ -563,7 +563,7 @@ impl<C: CommandArgs> CommandSet<C> {
         }
         let result = self
             .handler_set
-            .handle_cmd(self, cmd_args, &matches)
+            .handle_cmd(self, cmd_args, matches)
             .map_err(|e| {
                 format!(
                     "{}:{} {e}",
@@ -624,13 +624,16 @@ impl<C: CommandArgs> CommandSet<C> {
                 if !in_batch && matches.get_one::<bool>("interactive") == Some(&true) {
                     be_interactive = true;
                 }
-                match self.execute_given_matches(cmd_args, &matches) {
-                    Err(e) => {
-                        if !ignore_errors {
-                            return Err(e);
-                        }
+                if let Err(e) = self.execute_given_matches(cmd_args, &matches) {
+                    if !ignore_errors {
+                        return Err(e);
                     }
-                    _ => (),
+                }
+
+                if let Err(e) = self.execute_given_matches(cmd_args, &matches) {
+                    if !ignore_errors {
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -641,18 +644,15 @@ impl<C: CommandArgs> CommandSet<C> {
             let mut buffer = String::new();
             loop {
                 print!("{} > ", cmd.get_bin_name().unwrap_or_default());
-                stdout.flush().map_err(|e| e.to_string().into())?;
+                stdout.flush().map_err(|e| e.to_string())?;
                 if stdin.read_line(&mut buffer).is_err() {
                     break;
                 }
                 if buffer.is_empty() {
                     break;
                 }
-                match self.execute_str_line(cmd_args, &buffer) {
-                    Err(e) => {
-                        println!("Error: {e}");
-                    }
-                    _ => (),
+                if let Err(e) = self.execute_str_line(cmd_args, &buffer) {
+                    println!("Error: {e}");
                 }
                 buffer.clear();
             }

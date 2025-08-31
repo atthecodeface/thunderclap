@@ -153,7 +153,7 @@ impl<C: CommandArgs> CommandBuilder<C> {
             arg,
             Box::new(move |cmd_set, args, matches| {
                 for v in matches.get_many::<String>(tag).unwrap() {
-                    let (rest, opt_value) = cmd_set.substitute_var(args, v)?;
+                    let (_rest, opt_value) = cmd_set.substitute_var(args, v)?;
                     let value = {
                         if let Some(value) = opt_value {
                             value

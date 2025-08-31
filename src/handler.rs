@@ -3,9 +3,7 @@ use std::collections::HashMap;
 
 use clap::ArgMatches;
 
-use crate::{
-    ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandFn, CommandSet,
-};
+use crate::{ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandSet};
 
 //a CommandHandlerSet
 //tp CommandHandlerSet
@@ -107,7 +105,11 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
 
     //mi execute_cmd
     /// Execute the command function of this handler
-    fn execute_cmd(&self, cmd_set: &CommandSet<C>, cmd_args: &mut C) -> Result<C::Value, C::Error> {
+    fn execute_cmd(
+        &self,
+        _cmd_set: &CommandSet<C>,
+        cmd_args: &mut C,
+    ) -> Result<C::Value, C::Error> {
         if self.handler.is_none() {
             C::cmd_ok()
         } else {

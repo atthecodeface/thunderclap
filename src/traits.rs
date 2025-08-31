@@ -16,11 +16,23 @@ pub trait CommandArgsValue: std::default::Default {
     /// Return true if the value is effectively 'NULL', so should not be pusehd to the result stack
     fn is_none(&self) -> bool;
     fn from_str(s: &str) -> Result<Self, Self::FromStrError>;
+    fn len(&self) -> Option<usize> {
+        None
+    }
     fn index(&self, _n: usize) -> Option<Self> {
         None
     }
     fn get(&self, _s: &str) -> Option<Self> {
         None
+    }
+    fn key(&self, _n: usize) -> Option<&str> {
+        None
+    }
+    fn is_array(&self) -> bool {
+        false
+    }
+    fn is_map(&self) -> bool {
+        false
     }
 }
 

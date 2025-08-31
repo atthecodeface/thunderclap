@@ -23,18 +23,38 @@ impl CommandArgsValue for Value {
         self == &serde_json::Value::Null
     }
     fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
-        dbg!(s);
         serde_json::to_value(s) // from_str(s)
     }
     fn value_string(&self) -> String {
-        dbg!(self);
         serde_json::to_string(self).unwrap()
+    }
+    fn is_array(&self) -> bool {
+        self.is_array()
+    }
+    fn is_map(&self) -> bool {
+        self.is_map()
+    }
+    fn len(&self) -> Option<usize> {
+        if let Some(array) = self.as_array() {
+            Some(array.len())
+        } else if let Some(obj) = self.as_object() {
+            Some(obj.len())
+        } else {
+            None
+        }
     }
     fn index(&self, n: usize) -> Option<Self> {
         if !self.is_array() {
             None
         } else {
             self.get(n).cloned()
+        }
+    }
+    fn key(&self, n: usize) -> Option<&str> {
+        if let Some(obj) = self.as_object() {
+            obj.keys().skip(n).next().map(|x| x.as_str())
+        } else {
+            None
         }
     }
     fn get(&self, _s: &str) -> Option<Self> {

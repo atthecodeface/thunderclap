@@ -1,13 +1,10 @@
 //a Imports
 use std::collections::HashMap;
-use std::ffi::OsString;
-use std::io::Write;
-use std::rc::Rc;
 
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap::ArgMatches;
 
 use crate::{
-    ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandBuilder, CommandFn, CommandSet,
+    ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandFn, CommandSet,
 };
 
 //a CommandHandlerSet

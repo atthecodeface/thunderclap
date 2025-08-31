@@ -7,7 +7,7 @@ use std::rc::Rc;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
 use crate::CommandHandlerSet;
-use crate::{ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandBuilder, CommandFn};
+use crate::{CommandArgs, CommandArgsValue, CommandBuilder};
 
 //a CommandSet
 //tp CommandSet

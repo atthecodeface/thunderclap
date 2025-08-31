@@ -6,7 +6,9 @@ use std::rc::Rc;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::{ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandBuilder, CommandFn};
+use crate::{
+    ArgFn, ArgResetFn, CommandArgs, CommandArgsValue, CommandBuilder, CommandFn, CommandSet,
+};
 
 //a CommandHandlerSet
 //tp CommandHandlerSet
@@ -72,41 +74,29 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
     /// Each argument is expected to update 'cmd_args'; if an
     /// argument's [ArgFn] returns an error then all processing is
     /// stopped and that error is returned.
-    pub fn handle_args(&self, cmd_args: &mut C, matches: &ArgMatches) -> Result<(), C::Error> {
+    pub fn handle_args(
+        &self,
+        cmd_set: &CommandSet<C>,
+        cmd_args: &mut C,
+        matches: &ArgMatches,
+    ) -> Result<(), C::Error> {
         if let Some(arg_reset_fn) = &self.arg_reset {
             (*arg_reset_fn)(cmd_args);
         }
         for (a, f) in self.args.iter() {
             if matches.contains_id(a) {
-                if false {
-                    for (i, mut r) in matches.get_raw_occurrences(a).unwrap().enumerate() {
-                        if r.len() == 1 {
-                            eprintln!(
-                                "Arg '{a}' occurrence {} to value {:?}",
-                                i + 1,
-                                r.next().unwrap()
-                            );
-                        } else {
-                            let mut l = format!("Arg '{a}' occurrence {} to value [", i + 1);
-                            for v in r {
-                                l += &format!("{v:?}, ");
-                            }
-                            eprintln!("{l}]");
-                        }
-                    }
-                }
-                f(cmd_args, matches)?;
+                f(cmd_set, cmd_args, matches)?;
             }
         }
         Ok(())
     }
-
     //mi execute_sub_cmd
     /// Execute a named subcommand of this handler
     ///
     /// The subcommand's handler is invoked.
     fn execute_sub_cmd(
         &self,
+        cmd_set: &CommandSet<C>,
         subcommand: &str,
         cmd_args: &mut C,
         sub_matches: &ArgMatches,
@@ -114,13 +104,13 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         let Some(sub_handler_set) = self.sub_cmds.get(subcommand) else {
             panic!("Subcommand was added to clap so there should be a match in the table");
         };
-        sub_handler_set.handle_args(cmd_args, sub_matches)?;
-        sub_handler_set.handle_cmd(cmd_args, sub_matches)
+        sub_handler_set.handle_args(cmd_set, cmd_args, sub_matches)?;
+        sub_handler_set.handle_cmd(cmd_set, cmd_args, sub_matches)
     }
 
     //mi execute_cmd
     /// Execute the command function of this handler
-    fn execute_cmd(&self, cmd_args: &mut C) -> Result<C::Value, C::Error> {
+    fn execute_cmd(&self, cmd_set: &CommandSet<C>, cmd_args: &mut C) -> Result<C::Value, C::Error> {
         if self.handler.is_none() {
             C::cmd_ok()
         } else {
@@ -133,11 +123,16 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
     ///
     /// Either a subcommand of the handler is invoked, or if none
     /// is provided then the function for this handler is invoked
-    pub fn handle_cmd(&self, cmd_args: &mut C, matches: &ArgMatches) -> Result<C::Value, C::Error> {
+    pub fn handle_cmd(
+        &self,
+        cmd_set: &CommandSet<C>,
+        cmd_args: &mut C,
+        matches: &ArgMatches,
+    ) -> Result<C::Value, C::Error> {
         if let Some((subcommand, submatches)) = matches.subcommand() {
-            self.execute_sub_cmd(subcommand, cmd_args, submatches)
+            self.execute_sub_cmd(cmd_set, subcommand, cmd_args, submatches)
         } else {
-            self.execute_cmd(cmd_args)
+            self.execute_cmd(cmd_set, cmd_args)
         }
     }
 }

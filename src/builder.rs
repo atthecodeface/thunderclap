@@ -1,5 +1,6 @@
 //a Imports
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use clap::{value_parser, Arg, ArgAction, Command};
 
@@ -113,6 +114,60 @@ impl<C: CommandArgs> CommandBuilder<C> {
         CommandSet::main(self, allow_batch, allow_interactive)
     }
 
+    //mp add_arg_value
+    pub fn add_arg_value<F, I>(
+        &mut self,
+        tag: &'static str,
+        short: Option<char>,
+        help: &'static str,
+        count: I,
+        default_value: Option<&'static str>,
+        set: F,
+    ) where
+        F: Fn(&mut C, &Rc<C::Value>) -> Result<(), C::Error> + 'static,
+        I: Into<ArgCount>,
+    {
+        let count = count.into();
+        let uses_tag = count.uses_tag();
+        let required = count.required();
+        let action = count.action();
+        let num_args = count.num_args();
+        let mut arg = Arg::new(tag)
+            .help(help)
+            .value_parser(value_parser!(String))
+            .required(required)
+            .action(action);
+        if let Some(num_args) = num_args {
+            arg = arg.num_args(num_args);
+        }
+        if uses_tag {
+            arg = arg.long(tag);
+        }
+        if let Some(short) = short {
+            arg = arg.short(short);
+        }
+        if let Some(default_value) = default_value {
+            arg = arg.default_value(default_value);
+        }
+        self.add_arg(
+            arg,
+            Box::new(move |cmd_set, args, matches| {
+                for v in matches.get_many::<String>(tag).unwrap() {
+                    let (rest, opt_value) = cmd_set.substitute_var(args, v)?;
+                    let value = {
+                        if let Some(value) = opt_value {
+                            value
+                        } else {
+                            Rc::new(CommandSet::<C>::str_as_value(v)?)
+                        }
+                    };
+                    set(args, &value)?
+                }
+                Ok(())
+            }),
+        );
+    }
+
     //mp add_flag
     pub fn add_flag<F>(
         &mut self,
@@ -132,7 +187,9 @@ impl<C: CommandArgs> CommandBuilder<C> {
         }
         self.add_arg(
             arg,
-            Box::new(move |args, matches| set(args, *matches.get_one::<bool>(tag).unwrap())),
+            Box::new(move |_command_set, args, matches| {
+                set(args, *matches.get_one::<bool>(tag).unwrap())
+            }),
         );
     }
 }
@@ -200,7 +257,7 @@ macro_rules! add_arg {
 
                 self.add_arg(
                     arg,
-                    Box::new(move |args, matches| {
+                    Box::new(move |_command_set, args, matches| {
                         for v in matches.get_many::<$t>(tag).unwrap() {
                             set(args, &*v)?
                         }
@@ -229,7 +286,7 @@ macro_rules! add_arg {
 
                 self.add_arg(
                     arg,
-                    Box::new(move |args, matches| {
+                    Box::new(move |_command_set, args, matches| {
                         for v in matches.get_many::<$t>(tag).unwrap() {
                             set(args, *v)?
                         }

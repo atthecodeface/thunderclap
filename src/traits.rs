@@ -1,6 +1,8 @@
 //a Imports
 use clap::ArgMatches;
 
+use crate::CommandSet;
+
 //a CommandArgs
 //tt CommandArgsValue
 /// This must provide `ToString` for use in batch mode and
@@ -21,11 +23,6 @@ pub trait CommandArgsValue: std::default::Default {
         None
     }
 }
-
-//ip CommandArgsValue for JsonValue
-//
-// #[cfg(feature = "serde_json")]
-// use serde_json::Value as JsonValue;
 
 //ip CommandArgsValue for ()
 impl CommandArgsValue for () {
@@ -105,7 +102,7 @@ pub trait CommandArgs: 'static {
     /// Retrieve the value of a key, in some form, from the arguments - used in batch and interactive only
     ///
     /// Return None if the key is not provided by the args
-    fn value_str(&self, _key: &str) -> Option<String> {
+    fn value_str(&self, _key: &str) -> Option<Self::Value> {
         None
     }
 
@@ -121,8 +118,8 @@ pub trait CommandArgs: 'static {
     }
 }
 
-//a ArgFn
-//tt ArgFn
+//a ArgResetFn, ArgFn
+//tt ArgResetFn
 /// Trait of functions submitted to reset [CommandArgs] prior to a (sub)command
 ///
 /// This is invoked for a subcommand prior to setting its matches
@@ -153,10 +150,18 @@ impl<C: CommandArgs, T: Fn(&mut C) + 'static> ArgResetFn<C> for T {}
 /// should be supplied first, and its [ArgFn] will be invoked first,
 /// permitting later argument functions to just modify the main data
 /// structure.
-pub trait ArgFn<C: CommandArgs>: Fn(&mut C, &ArgMatches) -> Result<(), C::Error> + 'static {}
+pub trait ArgFn<C: CommandArgs>:
+    Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), C::Error> + 'static
+{
+}
 
 //ip ArgFn for Fn(CommandArgs, ArgMatches)
-impl<C: CommandArgs, T: Fn(&mut C, &ArgMatches) -> Result<(), C::Error> + 'static> ArgFn<C> for T {}
+impl<
+        C: CommandArgs,
+        T: Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), C::Error> + 'static,
+    > ArgFn<C> for T
+{
+}
 
 //a CommandFn
 //tt CommandFn

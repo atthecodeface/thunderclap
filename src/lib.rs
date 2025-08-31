@@ -5,6 +5,8 @@ mod command_set;
 mod handler;
 mod traits;
 
+pub mod json;
+
 pub use arg_count::ArgCount;
 pub use builder::CommandBuilder;
 pub use traits::{CommandArgs, CommandArgsValue};

@@ -202,12 +202,16 @@ impl<C: CommandArgs> CommandSet<C> {
         C::cmd_ok()
     }
 
+    //mi str_as_value
+    pub fn str_as_value(v: &str) -> Result<C::Value, C::Error> {
+        Ok(C::Value::from_str(v).map_err(|e| e.to_string())?)
+    }
+
     //mi set_variable_value_str
     fn set_variable_value_str(&mut self, k: &str, v: &str) -> Result<(), C::Error> {
-        self.variables.insert(
-            k.into(),
-            Rc::new(C::Value::from_str(v).map_err(|e| e.to_string())?),
-        );
+        eprintln!("Set variable '{k}' to value '{v}'");
+        self.variables
+            .insert(k.into(), Rc::new(Self::str_as_value(v)?));
         Ok(())
     }
 
@@ -222,7 +226,7 @@ impl<C: CommandArgs> CommandSet<C> {
 
         // If the client does not handle the 'set' then set a local variable
         if !cmd_args.value_set(k, v)? {
-            self.set_variable_value_str(k, v);
+            self.set_variable_value_str(k, v)?;
         }
         C::cmd_ok()
     }
@@ -240,12 +244,12 @@ impl<C: CommandArgs> CommandSet<C> {
                         .to_string()
                         .into());
                 };
-                println!("{k:20}: {v}");
+                println!("{k:20}: {}", v.value_string());
             }
         } else {
             for k in cmd_args.keys() {
                 if let Some(v) = cmd_args.value_str(k) {
-                    println!("{k:20}: {v}");
+                    println!("{k:20}: {}", v.value_string());
                 }
             }
         }
@@ -300,8 +304,7 @@ impl<C: CommandArgs> CommandSet<C> {
                 self.result_history.pop();
             }
             for v in values {
-                self.result_history
-                    .push(Rc::new(C::Value::from_str(v).map_err(|e| e.to_string())?));
+                self.result_history.push(Rc::new(Self::str_as_value(v)?));
             }
             if !self.result_history.is_empty() {
                 self.result_history
@@ -346,6 +349,69 @@ impl<C: CommandArgs> CommandSet<C> {
         }
     }
 
+    //mi substitute_var
+    /// Substitute variables etc
+    pub fn substitute_var<'a>(
+        &self,
+        cmd_args: &C,
+        s: &'a str,
+    ) -> Result<(&'a str, Option<Rc<C::Value>>), C::Error> {
+        if s.as_bytes().is_empty() || s.as_bytes()[0] != b'{' {
+            return Ok((s, None));
+        }
+        let Some((name, rest)) = s.split_at(1).1.split_once('}') else {
+            return Err(format!("Bad variable specification - no closing '}}'").into());
+        };
+        let value = {
+            if let Some(v) = self.variables.get(name) {
+                v.clone()
+            } else if let Some(v) = cmd_args.value_str(name) {
+                Rc::new(v)
+            } else if let Ok(v) = name.parse::<usize>() {
+                let n = self.result_history.len();
+                if v >= n {
+                    return Err(format!("Result stack is only {n} deep but requested {v}").into());
+                }
+                self.result_history[n - 1 - v].clone()
+            } else {
+                return Err(format!("Failed to evaluate ${{{name}}}").into());
+            }
+        };
+        let mut rest = rest;
+        while (C::Value::CAN_GET || C::Value::CAN_INDEX) && !rest.is_empty() {
+            let value = {
+                if rest.as_bytes()[0] == b'[' {
+                    let Some((index, new_rest)) = rest.split_at(1).1.split_once(']') else {
+                        return Err(format!(
+                            "Unterminated index (no ']') in variable substitution in script"
+                        )
+                        .into());
+                    };
+                    rest = new_rest;
+                    if let Ok(index) = index.parse::<usize>() {
+                        let Some(value) = value.index(index) else {
+                            return Err(format!(
+                                "Failed to get value at index {index} of value in script"
+                            )
+                            .into());
+                        };
+                        Rc::new(value)
+                    } else {
+                        let Some(value) = value.get(index) else {
+                            return Err(
+                                format!("Failed to get key '{index}' of value in script").into()
+                            );
+                        };
+                        Rc::new(value)
+                    }
+                } else {
+                    break;
+                }
+            };
+        }
+        Ok((rest, Some(value)))
+    }
+
     //mi substitute
     /// Substitute variables etc
     fn substitute(&self, cmd_args: &C, s: String) -> Result<String, C::Error> {
@@ -359,32 +425,12 @@ impl<C: CommandArgs> CommandSet<C> {
                 result.push(c);
                 continue;
             }
-            let Some(nc) = chars.next() else {
-                result.push(c);
-                return Ok(s);
-            };
-            if nc != '{' {
-                result.push(c);
-                continue;
-            }
-            if let Some((name, rest)) = chars.as_str().split_once('}') {
-                if let Some(v) = self.variables.get(name) {
-                    result += &v.value_string();
-                } else if let Some(v) = cmd_args.value_str(name) {
-                    result += &v;
-                } else if let Ok(v) = name.parse::<usize>() {
-                    let n = self.result_history.len();
-                    if v < n {
-                        result += &self.result_history[n - 1 - v].value_string();
-                    }
-                } else {
-                    return Err(format!("Failed to evaulate ${{{name}}}").into());
-                }
+            let (rest, opt_value) = self.substitute_var(cmd_args, chars.as_str())?;
+            if let Some(value) = opt_value {
+                result += &value.value_string();
                 chars = rest.chars();
             } else {
-                result.push('$');
-                result.push('{');
-                continue;
+                result.push(c);
             }
         }
         Ok(result)
@@ -484,7 +530,7 @@ impl<C: CommandArgs> CommandSet<C> {
         cmd_args: &mut C,
         matches: &ArgMatches,
     ) -> Result<(), C::Error> {
-        self.handler_set.handle_args(cmd_args, &matches)?;
+        self.handler_set.handle_args(self, cmd_args, &matches)?;
         if self.use_builtins {
             if let Some(result) = self.handle_builtins(cmd_args, &matches)? {
                 self.executed_result(result);
@@ -517,7 +563,7 @@ impl<C: CommandArgs> CommandSet<C> {
         }
         let result = self
             .handler_set
-            .handle_cmd(cmd_args, &matches)
+            .handle_cmd(self, cmd_args, &matches)
             .map_err(|e| {
                 format!(
                     "{}:{} {e}",

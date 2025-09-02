@@ -15,16 +15,42 @@ pub use serde_json::from_value;
 pub use serde_json::to_value;
 pub use serde_json::Value;
 
+//
+//     fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
+//        eprintln!("Json from str '{s}'");
+//        if let Ok(v) = serde_json::from_str::<Value>(s) {
+//            eprintln!("Value {v:?}");
+//            return Ok(v);
+//        }
+//        let v = serde_json::to_value(s)?;
+//        eprintln!("Value {v:?}");
+//        Ok(v)
+//    }
+
+pub trait JsonValueConvert: Sized {
+    type Error: Sized;
+    fn value_from_str(s: &str) -> Result<Self, Self::Error>;
+}
+impl JsonValueConvert for Value {
+    type Error = serde_json::Error;
+    fn value_from_str(s: &str) -> Result<Self, Self::Error> {
+        eprintln!("Json from str '{s}'");
+        if let Ok(v) = serde_json::from_str::<Value>(s) {
+            eprintln!("Value {v:?}");
+            return Ok(v);
+        }
+        let v = serde_json::to_value(s)?;
+        eprintln!("Value {v:?}");
+        Ok(v)
+    }
+}
+
 //ip CommandArgsValue for Value
 impl CommandArgsValue for Value {
     const CAN_INDEX: bool = true;
     const CAN_GET: bool = true;
-    type FromStrError = serde_json::Error;
     fn is_none(&self) -> bool {
         self == &serde_json::Value::Null
-    }
-    fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
-        serde_json::to_value(s) // from_str(s)
     }
     fn value_string(&self) -> String {
         serde_json::to_string(self).unwrap()

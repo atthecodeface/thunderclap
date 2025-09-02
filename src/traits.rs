@@ -1,7 +1,7 @@
 //a Imports
 use clap::ArgMatches;
 
-use crate::CommandSet;
+use crate::{CommandSet, ExecError};
 
 //a CommandArgs
 //tt CommandArgsValue
@@ -11,11 +11,9 @@ use crate::CommandSet;
 pub trait CommandArgsValue: std::default::Default {
     const CAN_INDEX: bool;
     const CAN_GET: bool;
-    type FromStrError: std::fmt::Display;
     fn value_string(&self) -> String;
     /// Return true if the value is effectively 'NULL', so should not be pusehd to the result stack
     fn is_none(&self) -> bool;
-    fn from_str(s: &str) -> Result<Self, Self::FromStrError>;
     fn is_empty(&self) -> bool {
         true
     }
@@ -43,14 +41,10 @@ pub trait CommandArgsValue: std::default::Default {
 impl CommandArgsValue for () {
     const CAN_INDEX: bool = false;
     const CAN_GET: bool = false;
-    type FromStrError = &'static str;
     fn is_none(&self) -> bool {
         true
     }
 
-    fn from_str(_s: &str) -> Result<Self, Self::FromStrError> {
-        Ok(())
-    }
     fn value_string(&self) -> String {
         "".into()
     }
@@ -62,11 +56,7 @@ macro_rules! command_args_value {
         impl $crate :: CommandArgsValue for $t {
             const CAN_INDEX: bool = false;
             const CAN_GET: bool = false;
-            type FromStrError = <$t as std::str::FromStr>::Err;
             fn is_none(&self) -> bool { false }
-            fn from_str(s: &str) -> Result<Self, Self::FromStrError> {
-                <Self as std::str::FromStr>::from_str(s)
-            }
             fn value_string(&self) -> String { std::string::ToString::to_string(self) }
         }
     };
@@ -96,10 +86,13 @@ command_args_value! {i8}
 /// build the arguments for the execution of commands
 pub trait CommandArgs: 'static {
     /// Error type returned as an error by all [ArgFn] and [CommandFn]
-    type Error: std::convert::From<String> + std::fmt::Display;
+    type Error: std::error::Error;
+    // type Error: std::convert::From<String> + std::error::Error;
 
     /// Value type returned by commands
     type Value: CommandArgsValue;
+
+    fn value_from_str(s: &str) -> Result<Self::Value, Self::Error>;
 
     fn cmd_ok() -> Result<Self::Value, Self::Error> {
         Ok(Self::Value::default())
@@ -128,7 +121,7 @@ pub trait CommandArgs: 'static {
     /// Return Ok(true) if the key value was set correctly
     ///
     /// Return Err() if the key was known but could not be set
-    fn value_set(&mut self, _key: &str, _value: &str) -> Result<bool, Self::Error> {
+    fn value_set(&mut self, _key: &str, _value: &Self::Value) -> Result<bool, Self::Error> {
         Ok(false)
     }
 }
@@ -166,14 +159,14 @@ impl<C: CommandArgs, T: Fn(&mut C) + 'static> ArgResetFn<C> for T {}
 /// permitting later argument functions to just modify the main data
 /// structure.
 pub trait ArgFn<C: CommandArgs>:
-    Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), C::Error> + 'static
+    Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), ExecError<C>> + 'static
 {
 }
 
 //ip ArgFn for Fn(CommandArgs, ArgMatches)
 impl<
         C: CommandArgs,
-        T: Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), C::Error> + 'static,
+        T: Fn(&CommandSet<C>, &mut C, &ArgMatches) -> Result<(), ExecError<C>> + 'static,
     > ArgFn<C> for T
 {
 }

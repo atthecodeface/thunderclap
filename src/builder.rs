@@ -4,7 +4,9 @@ use std::rc::Rc;
 
 use clap::{value_parser, Arg, ArgAction, Command};
 
-use crate::{ArgCount, ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandHandlerSet, CommandSet};
+use crate::{
+    ArgCount, ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandHandlerSet, CommandSet, ExecError,
+};
 
 //a Useful functions
 //mi into_box
@@ -152,18 +154,9 @@ impl<C: CommandArgs> CommandBuilder<C> {
         self.add_arg(
             arg,
             Box::new(move |cmd_set, args, matches| {
-                for v in matches.get_many::<String>(tag).unwrap() {
-                    let (_rest, opt_value) = cmd_set.substitute_var(args, v)?;
-                    let value = {
-                        if let Some(value) = opt_value {
-                            value
-                        } else {
-                            Rc::new(CommandSet::<C>::str_as_value(v)?)
-                        }
-                    };
-                    set(args, &value)?
-                }
-                Ok(())
+                cmd_set.fold_matches(args, matches, tag, (), |_, args, value| {
+                    set(args, &value).map_err(ExecError::set_arg)
+                })
             }),
         );
     }
@@ -188,7 +181,7 @@ impl<C: CommandArgs> CommandBuilder<C> {
         self.add_arg(
             arg,
             Box::new(move |_command_set, args, matches| {
-                set(args, *matches.get_one::<bool>(tag).unwrap())
+                set(args, *matches.get_one::<bool>(tag).unwrap()).map_err(ExecError::set_arg)
             }),
         );
     }
@@ -259,7 +252,7 @@ macro_rules! add_arg {
                     arg,
                     Box::new(move |_command_set, args, matches| {
                         for v in matches.get_many::<$t>(tag).unwrap() {
-                            set(args, &*v)?
+                            set(args, &*v).map_err(ExecError::set_arg)?
                         }
                         Ok(())
                     }),
@@ -288,7 +281,7 @@ macro_rules! add_arg {
                     arg,
                     Box::new(move |_command_set, args, matches| {
                         for v in matches.get_many::<$t>(tag).unwrap() {
-                            set(args, *v)?
+                            set(args, *v).map_err(ExecError::set_arg)?
                         }
                         Ok(())
                     }),

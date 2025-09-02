@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::CommandHandlerSet;
-use crate::{CommandArgs, CommandArgsValue, CommandBuilder};
+use crate::interactive::{shell, CmdRequest, CmdResponse};
+use crate::{CommandArgs, CommandArgsValue, CommandBuilder, CommandHandlerSet, ExecError};
 
 //a CommandSet
 //tp CommandSet
@@ -26,6 +26,7 @@ pub struct CommandSet<C: CommandArgs> {
     result_history: Vec<Rc<C::Value>>,
     use_builtins: bool,
     show_result: bool,
+    allow_interactive: bool,
 }
 
 //ip CommandSet
@@ -37,6 +38,7 @@ impl<C: CommandArgs> CommandSet<C> {
         batch_command: Command,
         handler_set: CommandHandlerSet<C>,
         use_builtins: bool,
+        allow_interactive: bool,
     ) -> Self {
         Self {
             command,
@@ -46,6 +48,7 @@ impl<C: CommandArgs> CommandSet<C> {
             variables: HashMap::default(),
             result_history: vec![],
             use_builtins,
+            allow_interactive,
             show_result: true,
         }
     }
@@ -86,7 +89,39 @@ impl<C: CommandArgs> CommandSet<C> {
                     .action(ArgAction::SetTrue),
             );
         }
-        Self::new(command, batch_command, handler_set, use_builtins)
+        Self::new(
+            command,
+            batch_command,
+            handler_set,
+            use_builtins,
+            allow_interactive,
+        )
+    }
+
+    //mi fold_matches
+    pub fn fold_matches<F, T>(
+        &self,
+        cmd_args: &mut C,
+        matches: &ArgMatches,
+        tag: &str,
+        mut acc: T,
+        mut fold: F,
+    ) -> Result<T, ExecError<C>>
+    where
+        F: FnMut(T, &mut C, &Rc<C::Value>) -> Result<T, ExecError<C>>,
+    {
+        for v in matches.get_many::<String>(tag).unwrap() {
+            let (_rest, opt_value) = self.substitute_var(cmd_args, v)?;
+            let value = {
+                if let Some(value) = opt_value {
+                    value
+                } else {
+                    Rc::new(C::value_from_str(v).map_err(ExecError::eval)?)
+                }
+            };
+            acc = fold(acc, cmd_args, &value)?;
+        }
+        Ok(acc)
     }
 
     //mi add_builtins
@@ -170,9 +205,9 @@ impl<C: CommandArgs> CommandSet<C> {
     //mi handle_builtin_echo
     fn handle_builtin_echo(
         &self,
-        _cmd_args: &mut C,
+        cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         let mut file = {
             if let Some(filename) = matches.get_one::<String>("file") {
                 let mut options = std::fs::File::options();
@@ -191,27 +226,27 @@ impl<C: CommandArgs> CommandSet<C> {
                 None
             }
         };
-        for v in matches.get_many::<String>("values").unwrap() {
-            if let Some(file) = &mut file {
-                writeln!(file, "{v}")
-                    .map_err(|_e| "Failed to write to echo output file".to_string())?;
-            } else {
-                println!("{v}");
-            }
+        if let Some(file) = &mut file {
+            self.fold_matches(cmd_args, matches, "values", (), |_, _, v| {
+                writeln!(file, "{}", v.value_string())
+                    .map_err(|_e| "Failed to write to echo output file".to_string().into())
+            })?;
+        } else {
+            self.fold_matches(cmd_args, matches, "values", (), |_, _, v| {
+                println!("{}", v.value_string());
+                Ok(())
+            })?;
         }
-        C::cmd_ok()
-    }
-
-    //mi str_as_value
-    pub fn str_as_value(v: &str) -> Result<C::Value, C::Error> {
-        Ok(C::Value::from_str(v).map_err(|e| e.to_string())?)
+        ExecError::cmd_ok()
     }
 
     //mi set_variable_value_str
-    fn set_variable_value_str(&mut self, k: &str, v: &str) -> Result<(), C::Error> {
-        eprintln!("Set variable '{k}' to value '{v}'");
-        self.variables
-            .insert(k.into(), Rc::new(Self::str_as_value(v)?));
+    fn set_variable_value_str(&mut self, k: &str, v: &str) -> Result<(), ExecError<C>> {
+        // eprintln!("Set variable '{k}' to value '{v}'");
+        self.variables.insert(
+            k.into(),
+            Rc::new(C::value_from_str(v).map_err(ExecError::eval)?),
+        );
         Ok(())
     }
 
@@ -220,15 +255,19 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         let k = matches.get_one::<String>("key").unwrap();
-        let v = matches.get_one::<String>("value").unwrap();
+        let value = self
+            .fold_matches(cmd_args, matches, "value", None, |_, _, v| {
+                Ok(Some(v.clone()))
+            })?
+            .unwrap();
 
         // If the client does not handle the 'set' then set a local variable
-        if !cmd_args.value_set(k, v)? {
-            self.set_variable_value_str(k, v)?;
+        if !cmd_args.value_set(k, &value).map_err(ExecError::set_arg)? {
+            self.variables.insert(k.into(), value);
         }
-        C::cmd_ok()
+        ExecError::cmd_ok()
     }
 
     //mi handle_builtin_show
@@ -236,13 +275,11 @@ impl<C: CommandArgs> CommandSet<C> {
         &self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         if let Some(keys) = matches.get_many::<String>("key") {
             for k in keys {
                 let Some(v) = cmd_args.value_str(k) else {
-                    return Err("Argument set does not have a value for '{k}'"
-                        .to_string()
-                        .into());
+                    return Err(format!("Argument set does not have a value for '{k}'").into());
                 };
                 println!("{k:20}: {}", v.value_string());
             }
@@ -253,7 +290,7 @@ impl<C: CommandArgs> CommandSet<C> {
                 }
             }
         }
-        C::cmd_ok()
+        ExecError::cmd_ok()
     }
 
     //mi handle_builtin_stack_show
@@ -261,11 +298,11 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         for (i, v) in self.result_history.iter().rev().enumerate() {
             println!("{i:4} : {}", v.value_string());
         }
-        C::cmd_ok()
+        ExecError::cmd_ok()
     }
 
     //mi handle_builtin_stack_clear
@@ -273,11 +310,11 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         if self.result_history.len() > 1 {
             let _ = self.result_history.drain(1..);
         }
-        C::cmd_ok()
+        ExecError::cmd_ok()
     }
 
     //mi handle_builtin_stack_pop
@@ -285,7 +322,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         _matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         if self.result_history.len() > 1 {
             Ok(Rc::into_inner(self.result_history.remove(1)).unwrap())
         } else {
@@ -298,13 +335,14 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         _cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         if let Some(values) = matches.get_many::<String>("values") {
             if !self.result_history.is_empty() {
                 self.result_history.pop();
             }
             for v in values {
-                self.result_history.push(Rc::new(Self::str_as_value(v)?));
+                self.result_history
+                    .push(Rc::new(C::value_from_str(v).map_err(ExecError::eval)?));
             }
             if !self.result_history.is_empty() {
                 self.result_history
@@ -314,7 +352,7 @@ impl<C: CommandArgs> CommandSet<C> {
             self.result_history
                 .push(self.result_history.last().unwrap().clone());
         }
-        C::cmd_ok()
+        ExecError::cmd_ok()
     }
 
     //mi handle_builtins
@@ -322,7 +360,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<Option<C::Value>, C::Error> {
+    ) -> Result<Option<C::Value>, ExecError<C>> {
         match matches.subcommand_name() {
             Some("echo") => self
                 .handle_builtin_echo(cmd_args, matches.subcommand().unwrap().1)
@@ -355,7 +393,7 @@ impl<C: CommandArgs> CommandSet<C> {
         &self,
         cmd_args: &C,
         s: &'a str,
-    ) -> Result<(&'a str, Option<Rc<C::Value>>), C::Error> {
+    ) -> Result<(&'a str, Option<Rc<C::Value>>), ExecError<C>> {
         if s.is_empty() || s.as_bytes()[0] != b'{' {
             return Ok((s, None));
         }
@@ -414,7 +452,7 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi substitute
     /// Substitute variables etc
-    fn substitute(&self, cmd_args: &C, s: String) -> Result<String, C::Error> {
+    fn substitute(&self, cmd_args: &C, s: String) -> Result<String, ExecError<C>> {
         if !s.contains('$') {
             return Ok(s);
         }
@@ -438,7 +476,7 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi parse_str
     /// Parse a str into a Vec<String>
-    fn parse_str(&mut self, cmd_args: &C, l: &str) -> Result<Vec<String>, C::Error> {
+    fn parse_str(&mut self, cmd_args: &C, l: &str) -> Result<Vec<String>, ExecError<C>> {
         let mut parsed = vec![];
         let mut token: Option<String> = None;
         let mut delimiter: Option<char> = None;
@@ -490,7 +528,7 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi execute_str_line
     /// Execute commands from a single-line[str]
-    fn execute_str_line(&mut self, cmd_args: &mut C, l: &str) -> Result<(), C::Error> {
+    pub fn execute_str_line(&mut self, cmd_args: &mut C, l: &str) -> Result<(), ExecError<C>> {
         let l = l.trim();
         let s = self.parse_str(cmd_args, l)?;
         if !s.is_empty() {
@@ -504,7 +542,7 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi execute_str
     /// Execute commands from a [str]
-    fn execute_str(&mut self, cmd_args: &mut C, s: &str) -> Result<(), C::Error> {
+    fn execute_str(&mut self, cmd_args: &mut C, s: &str) -> Result<(), ExecError<C>> {
         for l in s.lines() {
             if let Some(c_l) = self.cmd_stack.last_mut() {
                 c_l.1 = c_l.1.map(|x| x + 1);
@@ -529,8 +567,9 @@ impl<C: CommandArgs> CommandSet<C> {
         &mut self,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<(), C::Error> {
+    ) -> Result<(), ExecError<C>> {
         self.handler_set.handle_args(self, cmd_args, matches)?;
+
         if self.use_builtins {
             if let Some(result) = self.handle_builtins(cmd_args, matches)? {
                 self.executed_result(result);
@@ -579,7 +618,12 @@ impl<C: CommandArgs> CommandSet<C> {
     /// Execute at the top level, given an iterator that provides the arguments
     ///
     /// It is deemed to be executed from 'cmd_stack.last()';
-    fn execute<I, T>(&mut self, cmd_args: &mut C, itr: I, in_batch: bool) -> Result<(), C::Error>
+    fn execute<I, T>(
+        &mut self,
+        cmd_args: &mut C,
+        itr: I,
+        in_batch: bool,
+    ) -> Result<bool, ExecError<C>>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
@@ -621,7 +665,10 @@ impl<C: CommandArgs> CommandSet<C> {
                         false
                     }
                 };
-                if !in_batch && matches.get_one::<bool>("interactive") == Some(&true) {
+                if !in_batch
+                    && self.allow_interactive
+                    && matches.get_one::<bool>("interactive") == Some(&true)
+                {
                     be_interactive = true;
                 }
                 if let Err(e) = self.execute_given_matches(cmd_args, &matches) {
@@ -637,57 +684,94 @@ impl<C: CommandArgs> CommandSet<C> {
                 }
             }
         }
-        if be_interactive {
-            // Read in input.
-            let stdin = std::io::stdin();
-            let mut stdout = std::io::stdout();
-            let mut buffer = String::new();
-            loop {
-                print!("{} > ", cmd.get_bin_name().unwrap_or_default());
-                stdout.flush().map_err(|e| e.to_string())?;
-                if stdin.read_line(&mut buffer).is_err() {
-                    break;
-                }
-                if buffer.is_empty() {
-                    break;
-                }
-                if let Err(e) = self.execute_str_line(cmd_args, &buffer) {
-                    println!("Error: {e}");
-                }
-                buffer.clear();
+        Ok(be_interactive)
+    }
+
+    //mp execute_request
+    pub fn execute_request(&mut self, cmd_args: &mut C, cmd_request: CmdRequest) -> CmdResponse {
+        match cmd_request {
+            CmdRequest::Prompt => {
+                CmdResponse::Prompt(format!("{} > ", self.cmd_stack.last().unwrap().0))
             }
+            CmdRequest::Exec(line) => match self.execute_str_line(cmd_args, &line) {
+                Ok(_) => CmdResponse::ExecOk,
+                Err(e) => CmdResponse::ExecError(e.to_string()),
+            },
+            CmdRequest::ExecVec(strings) => match self.execute(cmd_args, strings.iter(), true) {
+                Ok(_) => CmdResponse::ExecOk,
+                Err(e) => CmdResponse::ExecError(e.to_string()),
+            },
+            CmdRequest::ExecVecSubst(strings) => {
+                let mut exec_strings = vec![];
+                for s in strings.into_iter() {
+                    match self.substitute(cmd_args, s) {
+                        Ok(s) => {
+                            exec_strings.push(s);
+                        }
+                        Err(e) => {
+                            return CmdResponse::ExecError(e.to_string());
+                        }
+                    }
+                }
+                match self.execute(cmd_args, exec_strings.iter(), true) {
+                    Ok(_) => CmdResponse::ExecOk,
+                    Err(e) => CmdResponse::ExecError(e.to_string()),
+                }
+            }
+            _ => CmdResponse::Finish,
         }
-        Ok(())
     }
 
     //mp execute_env
-    pub fn execute_env(&mut self, cmd_args: &mut C) -> Result<String, C::Error> {
+    /// Execute using the environment, running batch files and interactively if so requested
+    ///
+    /// Return the result of the last operation
+    pub fn execute_env(&mut self, cmd_args: &mut C) -> Result<Rc<C::Value>, ExecError<C>> {
         let mut iter = std::env::args_os();
         let cmd_name = iter.next().unwrap();
         self.cmd_stack
             .push((cmd_name.to_str().unwrap().into(), None));
         self.variables.clear();
+
         for (k, v) in std::env::vars() {
             self.set_variable_value_str(&k, &v)?;
         }
-        match self.execute(cmd_args, iter, false) {
+
+        let interactive = match self.execute(cmd_args, iter, false) {
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(4);
             }
-            _x => {
-                let result = {
-                    if self.result_history.is_empty() {
-                        C::Value::from_str("").map_err(|e| e.to_string())?
-                    } else {
-                        Rc::into_inner(self.result_history.remove(0)).unwrap()
-                    }
-                };
-                if self.show_result {
-                    println!("{}", result.value_string());
-                }
-                Ok(result.value_string())
-            }
+            Ok(interactive) => interactive,
+        };
+
+        // Move 'self' into 's' so that we can throw it to the shell
+        // *and* use it afterwards by taking it back from the shell
+        let mut s = self;
+        if interactive {
+            let (new_s, _cmd_args) = shell((s, cmd_args), |(s, cmd_args), request| {
+                s.execute_request(cmd_args, request)
+            });
+            s = new_s;
         }
+        Ok(s.result_history.first().cloned().unwrap_or_default())
+    }
+
+    //mp execute_env_noninteractive
+    /// Execute using the environment, running batch files if so requested
+    ///
+    /// Returns any error, Ok(true) if interactive is required
+    pub fn execute_env_noninteractive(&mut self, cmd_args: &mut C) -> Result<bool, ExecError<C>> {
+        let mut iter = std::env::args_os();
+        let cmd_name = iter.next().unwrap();
+        self.cmd_stack
+            .push((cmd_name.to_str().unwrap().into(), None));
+        self.variables.clear();
+
+        for (k, v) in std::env::vars() {
+            self.set_variable_value_str(&k, &v)?;
+        }
+
+        self.execute(cmd_args, iter, false)
     }
 }

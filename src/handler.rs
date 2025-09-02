@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use clap::ArgMatches;
 
-use crate::{ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandSet};
+use crate::{ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandSet, ExecError};
 
 //a CommandHandlerSet
 //tp CommandHandlerSet
@@ -74,7 +74,7 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         cmd_set: &CommandSet<C>,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<(), C::Error> {
+    ) -> Result<(), ExecError<C>> {
         if let Some(arg_reset_fn) = &self.arg_reset {
             (*arg_reset_fn)(cmd_args);
         }
@@ -85,6 +85,7 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         }
         Ok(())
     }
+
     //mi execute_sub_cmd
     /// Execute a named subcommand of this handler
     ///
@@ -95,12 +96,13 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         subcommand: &str,
         cmd_args: &mut C,
         sub_matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
-        let Some(sub_handler_set) = self.sub_cmds.get(subcommand) else {
-            panic!("Subcommand was added to clap so there should be a match in the table");
-        };
+    ) -> Result<C::Value, ExecError<C>> {
+        let sub_handler_set = self
+            .sub_cmds
+            .get(subcommand)
+            .expect("Subcommand was added to clap so there should be a match in the table");
         sub_handler_set.handle_args(cmd_set, cmd_args, sub_matches)?;
-        sub_handler_set.handle_cmd(cmd_set, cmd_args, sub_matches)
+        Ok(sub_handler_set.handle_cmd(cmd_set, cmd_args, sub_matches)?)
     }
 
     //mi execute_cmd
@@ -109,12 +111,12 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         &self,
         _cmd_set: &CommandSet<C>,
         cmd_args: &mut C,
-    ) -> Result<C::Value, C::Error> {
-        if self.handler.is_none() {
-            C::cmd_ok()
-        } else {
-            self.handler.as_ref().unwrap()(cmd_args)
-        }
+    ) -> Result<C::Value, ExecError<C>> {
+        self.handler
+            .as_ref()
+            .map(|handler| handler(cmd_args))
+            .unwrap_or_else(|| C::cmd_ok())
+            .map_err(ExecError::exec)
     }
 
     //mp handle_cmd
@@ -127,7 +129,7 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
         cmd_set: &CommandSet<C>,
         cmd_args: &mut C,
         matches: &ArgMatches,
-    ) -> Result<C::Value, C::Error> {
+    ) -> Result<C::Value, ExecError<C>> {
         if let Some((subcommand, submatches)) = matches.subcommand() {
             self.execute_sub_cmd(cmd_set, subcommand, cmd_args, submatches)
         } else {

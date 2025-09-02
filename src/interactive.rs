@@ -41,7 +41,7 @@ impl CmdRequest {
 #[derive(Debug)]
 pub enum CmdResponse {
     Prompt(String),
-    ExecOk,
+    ExecOk(String),
     ExecError(String),
     Finish,
 }
@@ -50,14 +50,28 @@ impl CmdResponse {
     pub fn is_finish(&self) -> bool {
         matches!(self, CmdResponse::Finish)
     }
-    pub fn is_ok(&self) -> bool {
-        matches!(self, CmdResponse::ExecOk)
+    pub fn is_prompt(&self) -> bool {
+        matches!(self, CmdResponse::Prompt(_))
     }
-    pub fn exec_error(&self) -> Option<&String> {
-        if let CmdResponse::ExecError(s) = self {
-            Some(s)
-        } else {
-            None
+    pub fn is_ok(&self) -> bool {
+        matches!(self, CmdResponse::ExecOk(_))
+    }
+    pub fn is_error(&self) -> bool {
+        matches!(self, CmdResponse::ExecError(_))
+    }
+    pub fn take(self) -> Option<String> {
+        match self {
+            CmdResponse::Prompt(s) => Some(s),
+            CmdResponse::ExecOk(s) => Some(s),
+            CmdResponse::ExecError(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn exec_result(&self) -> Option<&String> {
+        match self {
+            CmdResponse::ExecOk(s) => Some(s),
+            CmdResponse::ExecError(s) => Some(s),
+            _ => None,
         }
     }
     pub fn prompt(&self) -> Option<&String> {
@@ -97,7 +111,7 @@ where
         }
 
         match request(&mut data, CmdRequest::Exec(buffer)) {
-            CmdResponse::ExecOk => {}
+            CmdResponse::ExecOk(_s) => {}
             CmdResponse::ExecError(e) => {
                 println!("Error: {e}");
             }

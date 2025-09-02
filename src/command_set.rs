@@ -687,20 +687,34 @@ impl<C: CommandArgs> CommandSet<C> {
         Ok(be_interactive)
     }
 
+    //mi exec_as_cmd_response
+    fn exec_as_cmd_response<T>(&self, r: Result<T, ExecError<C>>) -> CmdResponse {
+        match r {
+            Ok(v) => {
+                if self.result_history.is_empty() {
+                    CmdResponse::ExecOk("".to_string())
+                } else {
+                    CmdResponse::ExecOk(self.result_history.first().unwrap().value_string())
+                }
+            }
+            Err(e) => CmdResponse::ExecError(e.to_string()),
+        }
+    }
+
     //mp execute_request
     pub fn execute_request(&mut self, cmd_args: &mut C, cmd_request: CmdRequest) -> CmdResponse {
         match cmd_request {
             CmdRequest::Prompt => {
                 CmdResponse::Prompt(format!("{} > ", self.cmd_stack.last().unwrap().0))
             }
-            CmdRequest::Exec(line) => match self.execute_str_line(cmd_args, &line) {
-                Ok(_) => CmdResponse::ExecOk,
-                Err(e) => CmdResponse::ExecError(e.to_string()),
-            },
-            CmdRequest::ExecVec(strings) => match self.execute(cmd_args, strings.iter(), true) {
-                Ok(_) => CmdResponse::ExecOk,
-                Err(e) => CmdResponse::ExecError(e.to_string()),
-            },
+            CmdRequest::Exec(line) => {
+                let result = self.execute_str_line(cmd_args, &line);
+                self.exec_as_cmd_response(result)
+            }
+            CmdRequest::ExecVec(strings) => {
+                let result = self.execute(cmd_args, strings.iter(), true);
+                self.exec_as_cmd_response(result)
+            }
             CmdRequest::ExecVecSubst(strings) => {
                 let mut exec_strings = vec![];
                 for s in strings.into_iter() {
@@ -713,10 +727,8 @@ impl<C: CommandArgs> CommandSet<C> {
                         }
                     }
                 }
-                match self.execute(cmd_args, exec_strings.iter(), true) {
-                    Ok(_) => CmdResponse::ExecOk,
-                    Err(e) => CmdResponse::ExecError(e.to_string()),
-                }
+                let result = self.execute(cmd_args, exec_strings.iter(), true);
+                self.exec_as_cmd_response(result)
             }
             _ => CmdResponse::Finish,
         }

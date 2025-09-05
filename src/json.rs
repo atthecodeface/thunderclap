@@ -34,13 +34,10 @@ pub trait JsonValueConvert: Sized {
 impl JsonValueConvert for Value {
     type Error = serde_json::Error;
     fn value_from_str(s: &str) -> Result<Self, Self::Error> {
-        eprintln!("Json from str '{s}'");
         if let Ok(v) = serde_json::from_str::<Value>(s) {
-            eprintln!("Value {v:?}");
             return Ok(v);
         }
         let v = serde_json::to_value(s)?;
-        eprintln!("Value {v:?}");
         Ok(v)
     }
 }

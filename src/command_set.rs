@@ -24,6 +24,7 @@ pub struct CommandSet<C: CommandArgs> {
     cmd_stack: Vec<(String, Option<usize>)>,
     variables: HashMap<String, Rc<C::Value>>,
     result_history: Vec<Rc<C::Value>>,
+    use_batch: bool,
     use_builtins: bool,
     show_result: bool,
     allow_interactive: bool,
@@ -38,6 +39,7 @@ impl<C: CommandArgs> CommandSet<C> {
         batch_command: Command,
         handler_set: CommandHandlerSet<C>,
         use_builtins: bool,
+        use_batch: bool,
         allow_interactive: bool,
     ) -> Self {
         Self {
@@ -48,6 +50,7 @@ impl<C: CommandArgs> CommandSet<C> {
             variables: HashMap::default(),
             result_history: vec![],
             use_builtins,
+            use_batch,
             allow_interactive,
             show_result: true,
         }
@@ -94,6 +97,7 @@ impl<C: CommandArgs> CommandSet<C> {
             batch_command,
             handler_set,
             use_builtins,
+            allow_batch,
             allow_interactive,
         )
     }
@@ -227,15 +231,14 @@ impl<C: CommandArgs> CommandSet<C> {
             }
         };
         if let Some(file) = &mut file {
-            self.fold_matches(cmd_args, matches, "values", (), |_, _, v| {
-                writeln!(file, "{}", v.value_string())
-                    .map_err(|_e| "Failed to write to echo output file".to_string().into())
-            })?;
+            for v in matches.get_many::<String>("values").unwrap() {
+                writeln!(file, "{}", v)?;
+            }
         } else {
-            self.fold_matches(cmd_args, matches, "values", (), |_, _, v| {
-                println!("{}", v.value_string());
-                Ok(())
-            })?;
+            for v in matches.get_many::<String>("values").unwrap() {
+                print!("{}", v);
+            }
+            println!();
         }
         ExecError::cmd_ok()
     }
@@ -401,18 +404,18 @@ impl<C: CommandArgs> CommandSet<C> {
             return Err(format!("Bad variable specification - no closing '}}'").into());
         };
         let mut value = {
-            if let Some(v) = self.variables.get(name) {
-                v.clone()
-            } else if let Some(v) = cmd_args.value_str(name) {
-                Rc::new(v)
-            } else if let Ok(v) = name.parse::<usize>() {
+            if let Ok(v) = name.parse::<usize>() {
                 let n = self.result_history.len();
                 if v >= n {
                     return Err(format!("Result stack is only {n} deep but requested {v}").into());
                 }
                 self.result_history[n - 1 - v].clone()
+            } else if let Some(v) = self.variables.get(name) {
+                v.clone()
+            } else if let Some(v) = cmd_args.value_str(name) {
+                Rc::new(v)
             } else {
-                return Err(format!("Failed to evaluate ${{{name}}}").into());
+                return Err(format!("Failed to evaluate '${{{name}}}'").into());
             }
         };
         let mut rest = rest;
@@ -576,7 +579,7 @@ impl<C: CommandArgs> CommandSet<C> {
                 return Ok(());
             }
         }
-        if matches.contains_id("batch") {
+        if self.use_batch && matches.contains_id("batch") {
             self.show_result = false;
             let batches: Vec<_> = matches
                 .get_many::<String>("batch")
@@ -618,7 +621,7 @@ impl<C: CommandArgs> CommandSet<C> {
     /// Execute at the top level, given an iterator that provides the arguments
     ///
     /// It is deemed to be executed from 'cmd_stack.last()';
-    fn execute<I, T>(
+    pub fn execute<I, T>(
         &mut self,
         cmd_args: &mut C,
         itr: I,
@@ -676,12 +679,6 @@ impl<C: CommandArgs> CommandSet<C> {
                         return Err(e);
                     }
                 }
-
-                if let Err(e) = self.execute_given_matches(cmd_args, &matches) {
-                    if !ignore_errors {
-                        return Err(e);
-                    }
-                }
             }
         }
         Ok(be_interactive)
@@ -690,7 +687,7 @@ impl<C: CommandArgs> CommandSet<C> {
     //mi exec_as_cmd_response
     fn exec_as_cmd_response<T>(&self, r: Result<T, ExecError<C>>) -> CmdResponse {
         match r {
-            Ok(v) => {
+            Ok(_) => {
                 if self.result_history.is_empty() {
                     CmdResponse::ExecOk("".to_string())
                 } else {
@@ -734,11 +731,8 @@ impl<C: CommandArgs> CommandSet<C> {
         }
     }
 
-    //mp execute_env
-    /// Execute using the environment, running batch files and interactively if so requested
-    ///
-    /// Return the result of the last operation
-    pub fn execute_env(&mut self, cmd_args: &mut C) -> Result<Rc<C::Value>, ExecError<C>> {
+    //mp set_env
+    pub fn set_env(&mut self) -> Result<(), ExecError<C>> {
         let mut iter = std::env::args_os();
         let cmd_name = iter.next().unwrap();
         self.cmd_stack
@@ -746,8 +740,21 @@ impl<C: CommandArgs> CommandSet<C> {
         self.variables.clear();
 
         for (k, v) in std::env::vars() {
-            self.set_variable_value_str(&k, &v)?;
+            // Ignore errors importing the environment
+            //
+            // If the value is integers, importing a Path will produce an error, but...
+            let _ = self.set_variable_value_str(&k, &v);
         }
+        Ok(())
+    }
+
+    //mp execute_env
+    /// Execute using the environment, running batch files and interactively if so requested
+    ///
+    /// Return the result of the last operation
+    pub fn execute_env(&mut self, cmd_args: &mut C) -> Result<Rc<C::Value>, ExecError<C>> {
+        self.set_env()?;
+        let iter = std::env::args_os().skip(1);
 
         let interactive = match self.execute(cmd_args, iter, false) {
             Err(e) => {
@@ -774,16 +781,8 @@ impl<C: CommandArgs> CommandSet<C> {
     ///
     /// Returns any error, Ok(true) if interactive is required
     pub fn execute_env_noninteractive(&mut self, cmd_args: &mut C) -> Result<bool, ExecError<C>> {
-        let mut iter = std::env::args_os();
-        let cmd_name = iter.next().unwrap();
-        self.cmd_stack
-            .push((cmd_name.to_str().unwrap().into(), None));
-        self.variables.clear();
-
-        for (k, v) in std::env::vars() {
-            self.set_variable_value_str(&k, &v)?;
-        }
-
+        self.set_env()?;
+        let iter = std::env::args_os().skip(1);
         self.execute(cmd_args, iter, false)
     }
 }

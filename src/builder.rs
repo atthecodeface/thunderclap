@@ -71,6 +71,11 @@ impl<C: CommandArgs> CommandBuilder<C> {
         Self::create_with_opt_handler(command, Some(handler))
     }
 
+    //ap command
+    pub fn command(&self) -> &Command {
+        &self.command
+    }
+
     //mp set_arg_reset
     pub fn set_arg_reset(&mut self, handler: Box<dyn ArgResetFn<C>>) -> &mut Self {
         self.handler_set.set_arg_reset(handler);

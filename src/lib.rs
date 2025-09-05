@@ -38,21 +38,33 @@ where
     Ok(v)
 }
 
-#[derive(Error, Debug)]
+#[derive(Error)]
 pub enum ExecError<C>
 where
     C: CommandArgs,
 {
-    #[error("failed to evaluate string")]
+    #[error("failed to evaluate string: {0}")]
     Eval(C::Error),
     #[error("failed to set argument")]
     SetArg(C::Error),
+    #[error("failed to output")]
+    Io(#[from] std::io::Error),
     #[error("failed to execute command")]
     Exec(C::Error),
     #[error("failed to execute builtin command: {0}")]
     Builtin(String),
     #[error("some message: {0}")]
     Msg(String),
+}
+
+//ip Debug for ExecError<C>
+impl<C> std::fmt::Debug for ExecError<C>
+where
+    C: CommandArgs,
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        <Self as std::fmt::Display>::fmt(self, fmt)
+    }
 }
 
 impl<C> From<String> for ExecError<C>

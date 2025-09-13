@@ -45,11 +45,11 @@ where
 {
     #[error("failed to evaluate string: {0}")]
     Eval(C::Error),
-    #[error("failed to set argument")]
+    #[error("failed to set argument to command: {0}")]
     SetArg(C::Error),
-    #[error("failed to output")]
+    #[error("failed to output: {0}")]
     Io(#[from] std::io::Error),
-    #[error("failed to execute command")]
+    #[error("failed to execute command: {0}")]
     Exec(C::Error),
     #[error("failed to execute builtin command: {0}")]
     Builtin(String),

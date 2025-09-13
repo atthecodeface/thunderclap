@@ -209,7 +209,7 @@ impl<C: CommandArgs> CommandSet<C> {
     //mi handle_builtin_echo
     fn handle_builtin_echo(
         &self,
-        cmd_args: &mut C,
+        _cmd_args: &mut C,
         matches: &ArgMatches,
     ) -> Result<C::Value, ExecError<C>> {
         let mut file = {
@@ -488,6 +488,8 @@ impl<C: CommandArgs> CommandSet<C> {
             if token.is_none() {
                 if c.is_whitespace() {
                     continue;
+                } else if c == '#' {
+                    break;
                 } else if c == '"' || c == '\'' {
                     delimiter = Some(c);
                     token = Some(String::new());

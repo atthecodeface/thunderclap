@@ -28,7 +28,7 @@ use clap::ArgAction;
 ///
 ///    * (Some(n), false) for exactly 'n' option arguments
 ///
-///    * (n:usize, ) for a minmimum of n arguments, with no maximum number (note this is a tuple)
+///    * (n:usize, ) for a minimum of n arguments, with no maximum number (note this is a tuple)
 ///
 #[derive(Debug, Default, Clone, Copy)]
 pub enum ArgCount {

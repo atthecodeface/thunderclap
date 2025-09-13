@@ -91,9 +91,12 @@ where
 {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    loop {
+    let mut has_finished = false;
+    while !has_finished {
         let mut buffer = String::new();
-        let CmdResponse::Prompt(prompt) = request(&mut data, CmdRequest::Prompt) else {
+        let response = request(&mut data, CmdRequest::Prompt);
+        has_finished = response.is_finish();
+        let CmdResponse::Prompt(prompt) = response else {
             break;
         };
         print!("{}", prompt);
@@ -110,7 +113,9 @@ where
             break;
         }
 
-        match request(&mut data, CmdRequest::Exec(buffer)) {
+        let response = request(&mut data, CmdRequest::Exec(buffer));
+        has_finished = response.is_finish();
+        match response {
             CmdResponse::ExecOk(_s) => {}
             CmdResponse::ExecError(e) => {
                 println!("Error: {e}");
@@ -120,6 +125,9 @@ where
             }
         }
     }
-    let _ = request(&mut data, CmdRequest::Finish);
+    // eprintln!("Has finished? {has_finished}");
+    if !has_finished {
+        let _ = request(&mut data, CmdRequest::Finish);
+    }
     data
 }

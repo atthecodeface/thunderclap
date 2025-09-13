@@ -455,8 +455,17 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi substitute
     /// Substitute variables etc
-    fn substitute(&self, cmd_args: &C, s: String) -> Result<String, ExecError<C>> {
-        if !s.contains('$') {
+    ///
+    /// If the supplied string starts with a double-quote then replace any variable with unquoted values (if a string value)
+    ///
+    /// If the supplied string does not start with a double-quote then replace directly
+    fn substitute(
+        &self,
+        cmd_args: &C,
+        s: String,
+        in_dbl_quote: bool,
+    ) -> Result<String, ExecError<C>> {
+        if s.is_empty() || !s.contains('$') {
             return Ok(s);
         }
         let mut result = String::new();
@@ -468,7 +477,12 @@ impl<C: CommandArgs> CommandSet<C> {
             }
             let (rest, opt_value) = self.substitute_var(cmd_args, chars.as_str())?;
             if let Some(value) = opt_value {
-                result += &value.value_string();
+                let value_string = value.value_string();
+                if in_dbl_quote && value_string.len() > 2 && value_string.as_bytes()[0] == b'"' {
+                    result += value_string.trim_matches('"');
+                } else {
+                    result += &value_string;
+                }
                 chars = rest.chars();
             } else {
                 result.push(c);
@@ -479,6 +493,26 @@ impl<C: CommandArgs> CommandSet<C> {
 
     //mi parse_str
     /// Parse a str into a Vec<String>
+    ///
+    /// This is provided with a complete batch file line, and should
+    /// produce the appropriate result
+    ///
+    /// Parsing happens by left-to-right analysis, looking for tokens
+    /// which are (generally) copied verbatim - a token being
+    /// non-whitespace.
+    ///
+    /// However, a '#' introduces a comment, and so the '#' and the
+    /// rest of the line are discarded and parsing finishes
+    ///
+    /// A double quote introduces a string that continues until the
+    /// next non-escaped double quote; such a string goes through
+    /// string variable subsitution.
+    ///
+    /// A single quote introduces a string that continues until the
+    /// next non-escaped single quote; such a string does *NOT* go through
+    /// variable subsitution.
+    ///
+    /// A '$' introduces a variable substituion
     fn parse_str(&mut self, cmd_args: &C, l: &str) -> Result<Vec<String>, ExecError<C>> {
         let mut parsed = vec![];
         let mut token: Option<String> = None;
@@ -486,6 +520,7 @@ impl<C: CommandArgs> CommandSet<C> {
         let mut escape = false;
         for c in l.chars() {
             if token.is_none() {
+                // Nothing in hand
                 if c.is_whitespace() {
                     continue;
                 } else if c == '#' {
@@ -498,11 +533,13 @@ impl<C: CommandArgs> CommandSet<C> {
                     token.as_mut().unwrap().push(c);
                 }
             } else if escape {
+                // escape a character (e.g. inside quotes)
                 token.as_mut().unwrap().push(c);
             } else if let Some(dc) = delimiter {
+                // Closing delimiter
                 if c == dc {
                     if dc == '"' {
-                        parsed.push(self.substitute(cmd_args, token.take().unwrap())?);
+                        parsed.push(self.substitute(cmd_args, token.take().unwrap(), true)?);
                     } else {
                         parsed.push(token.take().unwrap());
                     }
@@ -515,17 +552,17 @@ impl<C: CommandArgs> CommandSet<C> {
             } else if c == '\\' {
                 escape = true;
             } else if c.is_whitespace() {
-                parsed.push(self.substitute(cmd_args, token.take().unwrap())?);
+                parsed.push(self.substitute(cmd_args, token.take().unwrap(), false)?);
             } else {
                 token.as_mut().unwrap().push(c);
             }
         }
         // Should check delimiter is none, escape is false
         if let Some(token) = token {
-            if delimiter != Some('\'') {
-                parsed.push(self.substitute(cmd_args, token)?);
+            if let Some(delimiter) = delimiter {
+                return Err(format!("unclosed delimiter {} in line", delimiter).into());
             } else {
-                parsed.push(token);
+                parsed.push(self.substitute(cmd_args, token, false)?);
             }
         }
         Ok(parsed)
@@ -717,7 +754,7 @@ impl<C: CommandArgs> CommandSet<C> {
             CmdRequest::ExecVecSubst(strings) => {
                 let mut exec_strings = vec![];
                 for s in strings.into_iter() {
-                    match self.substitute(cmd_args, s) {
+                    match self.substitute(cmd_args, s, false) {
                         Ok(s) => {
                             exec_strings.push(s);
                         }

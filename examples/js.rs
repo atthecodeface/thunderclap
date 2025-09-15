@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use thunderclap::json;
 
 impl thunderclap::CommandArgs for CmdArgs {
@@ -21,7 +20,7 @@ pub struct CmdArgs {}
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command = thunderclap::Command::new("js").about("Example JsonValue");
-    let mut build = thunderclap::CommandBuilder::<CmdArgs>::new(command);
+    let build = thunderclap::CommandBuilder::<CmdArgs>::new(command);
     let mut cmd_args = CmdArgs::default();
     let mut command = build.main(true, true);
     command.execute_env(&mut cmd_args)?;

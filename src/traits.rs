@@ -79,6 +79,13 @@ command_args_value! {i32}
 command_args_value! {i16}
 command_args_value! {i8}
 
+//ip CommandArgsValue for f32, f64
+command_args_value! {f32}
+command_args_value! {f64}
+
+//ip CommandArgsValue for bool
+command_args_value! {bool}
+
 //tt CommandArgs
 /// Trait that describes to the library the types used for argument and command functions
 ///

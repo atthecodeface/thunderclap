@@ -344,6 +344,7 @@ impl<C: CommandArgs> CommandSet<C> {
                 self.result_history.pop();
             }
             for v in values {
+                dbg!(&v);
                 self.result_history
                     .push(Rc::new(C::value_from_str(v).map_err(ExecError::eval)?));
             }
@@ -401,7 +402,9 @@ impl<C: CommandArgs> CommandSet<C> {
             return Ok((s, None));
         }
         let Some((name, rest)) = s.split_at(1).1.split_once('}') else {
-            return Err("Bad variable specification - no closing '}'".to_string().into());
+            return Err("Bad variable specification - no closing '}'"
+                .to_string()
+                .into());
         };
         let mut value = {
             if let Ok(v) = name.parse::<usize>() {
@@ -423,8 +426,11 @@ impl<C: CommandArgs> CommandSet<C> {
             value = {
                 if rest.as_bytes()[0] == b'[' {
                     let Some((index, new_rest)) = rest.split_at(1).1.split_once(']') else {
-                        return Err("Unterminated index (no ']') in variable substitution in script".to_string()
-                        .into());
+                        return Err(
+                            "Unterminated index (no ']') in variable substitution in script"
+                                .to_string()
+                                .into(),
+                        );
                     };
                     rest = new_rest;
                     if let Ok(index) = index.parse::<usize>() {
@@ -580,18 +586,6 @@ impl<C: CommandArgs> CommandSet<C> {
         Ok(())
     }
 
-    //mi execute_str
-    /// Execute commands from a [str]
-    fn execute_str(&mut self, cmd_args: &mut C, s: &str) -> Result<(), ExecError<C>> {
-        for l in s.lines() {
-            if let Some(c_l) = self.cmd_stack.last_mut() {
-                c_l.1 = c_l.1.map(|x| x + 1);
-            }
-            self.execute_str_line(cmd_args, l)?;
-        }
-        Ok(())
-    }
-
     //mi executed_result
     fn executed_result(&mut self, result: C::Value) {
         if !result.is_none() {
@@ -635,9 +629,7 @@ impl<C: CommandArgs> CommandSet<C> {
                 }
             }
             for (filename, s) in batches {
-                self.cmd_stack.push((filename, Some(0)));
-                self.execute_str(cmd_args, &s.unwrap())?;
-                self.cmd_stack.pop();
+                self.execute_batch(cmd_args, filename, &s.unwrap())?;
             }
         }
         let result = self
@@ -735,6 +727,23 @@ impl<C: CommandArgs> CommandSet<C> {
         }
     }
 
+    //mi set_env
+    fn set_env(&mut self) -> Result<(), ExecError<C>> {
+        let mut iter = std::env::args_os();
+        let cmd_name = iter.next().unwrap();
+        self.cmd_stack
+            .push((cmd_name.to_str().unwrap().into(), None));
+        self.variables.clear();
+
+        for (k, v) in std::env::vars() {
+            // Ignore errors importing the environment
+            //
+            // If the value is integers, importing a Path will produce an error, but...
+            let _ = self.set_variable_value_str(&k, &v);
+        }
+        Ok(())
+    }
+
     //mp execute_request
     pub fn execute_request(&mut self, cmd_args: &mut C, cmd_request: CmdRequest) -> CmdResponse {
         match cmd_request {
@@ -768,20 +777,20 @@ impl<C: CommandArgs> CommandSet<C> {
         }
     }
 
-    //mp set_env
-    pub fn set_env(&mut self) -> Result<(), ExecError<C>> {
-        let mut iter = std::env::args_os();
-        let cmd_name = iter.next().unwrap();
-        self.cmd_stack
-            .push((cmd_name.to_str().unwrap().into(), None));
-        self.variables.clear();
-
-        for (k, v) in std::env::vars() {
-            // Ignore errors importing the environment
-            //
-            // If the value is integers, importing a Path will produce an error, but...
-            let _ = self.set_variable_value_str(&k, &v);
+    //mp execute_batch
+    /// Execute a batch of commands from a [str], one per line
+    pub fn execute_batch<I: Into<String>>(
+        &mut self,
+        cmd_args: &mut C,
+        filename: I,
+        s: &str,
+    ) -> Result<(), ExecError<C>> {
+        self.cmd_stack.push((filename.into(), Some(0)));
+        for l in s.lines() {
+            *self.cmd_stack.last_mut().unwrap().1.as_mut().unwrap() += 1;
+            self.execute_str_line(cmd_args, l)?;
         }
+        self.cmd_stack.pop();
         Ok(())
     }
 

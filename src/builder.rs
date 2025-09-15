@@ -116,12 +116,18 @@ impl<C: CommandArgs> CommandBuilder<C> {
     }
 
     //mp main
-    /// Convert the builder into an actual [CommandSet] to be used by 'main'
+    /// Convert the builder into an actual [CommandSet] to be used by
+    /// 'main' or 'execute'
     pub fn main(self, allow_batch: bool, allow_interactive: bool) -> CommandSet<C> {
         CommandSet::main(self, allow_batch, allow_interactive)
     }
 
     //mp add_arg_value
+    /// Invoke the 'set' function if the option is provided, once for
+    /// each match, for each command execution.
+    ///
+    /// If a default value is provided then there will be at least one
+    /// match, and therefore at least one invocation of the 'set' function.
     pub fn add_arg_value<F, I>(
         &mut self,
         tag: &'static str,
@@ -167,6 +173,8 @@ impl<C: CommandArgs> CommandBuilder<C> {
     }
 
     //mp add_flag
+    /// The 'set' function is always invoked, on every command
+    /// execution, with either true or false as the argument
     pub fn add_flag<F>(
         &mut self,
         tag: &'static str,
@@ -228,7 +236,7 @@ macro_rules! add_arg {
         ///    arguments that do not need a short setting.
         ///
         /// 'count' indicates the number of arguments required, and if
-        ///    the argument is positional or requires a '--X' option
+        ///    the argument is positional or requires a '--XXX' option
         ///
         /// 'default_value' is a *string* which is used if the user
         ///    does not provide an option; this will be parsed
@@ -299,6 +307,7 @@ macro_rules! add_arg {
     };
 }
 
+//a add_arg_* methods for CommandBuilder
 add_arg!(add_arg_string, String, ref str);
 
 add_arg!(add_arg_isize, isize);

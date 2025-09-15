@@ -99,7 +99,7 @@ where
         let CmdResponse::Prompt(prompt) = response else {
             break;
         };
-        print!("{}", prompt);
+        print!("{prompt}");
 
         if let Err(e) = stdout.flush() {
             println!("Error: {e}");

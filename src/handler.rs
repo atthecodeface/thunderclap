@@ -102,7 +102,7 @@ impl<C: CommandArgs> CommandHandlerSet<C> {
             .get(subcommand)
             .expect("Subcommand was added to clap so there should be a match in the table");
         sub_handler_set.handle_args(cmd_set, cmd_args, sub_matches)?;
-        Ok(sub_handler_set.handle_cmd(cmd_set, cmd_args, sub_matches)?)
+        sub_handler_set.handle_cmd(cmd_set, cmd_args, sub_matches)
     }
 
     //mi execute_cmd

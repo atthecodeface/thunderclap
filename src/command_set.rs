@@ -232,11 +232,11 @@ impl<C: CommandArgs> CommandSet<C> {
         };
         if let Some(file) = &mut file {
             for v in matches.get_many::<String>("values").unwrap() {
-                writeln!(file, "{}", v)?;
+                writeln!(file, "{v}")?;
             }
         } else {
             for v in matches.get_many::<String>("values").unwrap() {
-                print!("{}", v);
+                print!("{v}");
             }
             println!();
         }
@@ -401,7 +401,7 @@ impl<C: CommandArgs> CommandSet<C> {
             return Ok((s, None));
         }
         let Some((name, rest)) = s.split_at(1).1.split_once('}') else {
-            return Err(format!("Bad variable specification - no closing '}}'").into());
+            return Err("Bad variable specification - no closing '}'".to_string().into());
         };
         let mut value = {
             if let Ok(v) = name.parse::<usize>() {
@@ -423,9 +423,7 @@ impl<C: CommandArgs> CommandSet<C> {
             value = {
                 if rest.as_bytes()[0] == b'[' {
                     let Some((index, new_rest)) = rest.split_at(1).1.split_once(']') else {
-                        return Err(format!(
-                            "Unterminated index (no ']') in variable substitution in script"
-                        )
+                        return Err("Unterminated index (no ']') in variable substitution in script".to_string()
                         .into());
                     };
                     rest = new_rest;
@@ -560,7 +558,7 @@ impl<C: CommandArgs> CommandSet<C> {
         // Should check delimiter is none, escape is false
         if let Some(token) = token {
             if let Some(delimiter) = delimiter {
-                return Err(format!("unclosed delimiter {} in line", delimiter).into());
+                return Err(format!("unclosed delimiter {delimiter} in line").into());
             } else {
                 parsed.push(self.substitute(cmd_args, token, false)?);
             }

@@ -160,7 +160,7 @@ impl<C: CommandArgs> CommandBuilder<C> {
             arg,
             Box::new(move |cmd_set, args, matches| {
                 cmd_set.fold_matches(args, matches, tag, (), |_, args, value| {
-                    set(args, &value).map_err(ExecError::set_arg)
+                    set(args, value).map_err(ExecError::set_arg)
                 })
             }),
         );

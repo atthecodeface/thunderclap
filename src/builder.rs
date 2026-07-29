@@ -2,10 +2,12 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use clap::{value_parser, Arg, ArgAction, Command};
+use clap::builder::StyledStr;
+use clap::{Arg, ArgAction, Command, Id, value_parser};
 
 use crate::{
-    ArgCount, ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandHandlerSet, CommandSet, ExecError,
+    ArgCount, ArgDescriptor, ArgFn, ArgResetFn, CommandArgs, CommandFn, CommandHandlerSet,
+    CommandSet, ExecError,
 };
 
 //a Useful functions
@@ -80,6 +82,12 @@ impl<C: CommandArgs> CommandBuilder<C> {
     pub fn set_arg_reset(&mut self, handler: Box<dyn ArgResetFn<C>>) -> &mut Self {
         self.handler_set.set_arg_reset(handler);
         self
+    }
+
+    pub fn add_args(&mut self, arg_descriptors: &[ArgDescriptor<C>]) {
+        for ad in arg_descriptors {
+            ad.build(self);
+        }
     }
 
     //mp add_arg
@@ -246,25 +254,28 @@ macro_rules! add_arg {
         ///    argument; if the count indicates a *single* argument at
         ///    most, then it will be invoked at most once
         impl<C: CommandArgs> CommandBuilder<C> {
-            pub fn $m<F, I>(
+            pub fn $m<F, I, S, T>(
                 &mut self,
-                tag: &'static str,
+                tag: T,
                 short: Option<char>,
-                help: &'static str,
+                help: S,
                 count: I,
                 default_value: Option<&'static str>,
                 set: F,
             ) where
                 F: Fn(&mut C, &$ft) -> Result<(), C::Error> + 'static,
                 I: Into<ArgCount>,
+                S: Into<StyledStr>,
+                T: Into<Id>,
             {
                 let count = count.into();
-                let arg = add_arg!($t, tag, help, short, count, default_value);
+                let tag: Id = tag.into();
+                let arg = add_arg!($t, tag.clone(), help, short, count, default_value);
 
                 self.add_arg(
                     arg,
                     Box::new(move |_command_set, args, matches| {
-                        for v in matches.get_many::<$t>(tag).unwrap() {
+                        for v in matches.get_many::<$t>(tag.as_str()).unwrap() {
                             set(args, &*v).map_err(ExecError::set_arg)?
                         }
                         Ok(())
@@ -275,25 +286,28 @@ macro_rules! add_arg {
     };
     ($m:ident, $t: ty, $ft:ty ) => {
         impl<C: CommandArgs> CommandBuilder<C> {
-            pub fn $m<F, I>(
+            pub fn $m<F, I, S, T>(
                 &mut self,
-                tag: &'static str,
+                tag: T,
                 short: Option<char>,
-                help: &'static str,
+                help: S,
                 count: I,
                 default_value: Option<&'static str>,
                 set: F,
             ) where
                 F: Fn(&mut C, $ft) -> Result<(), C::Error> + 'static,
                 I: Into<ArgCount>,
+                S: Into<StyledStr>,
+                T: Into<Id>,
             {
                 let count = count.into();
-                let arg = add_arg!($t, tag, help, short, count, default_value);
+                let tag: Id = tag.into();
+                let arg = add_arg!($t, tag.clone(), help, short, count, default_value);
 
                 self.add_arg(
                     arg,
                     Box::new(move |_command_set, args, matches| {
-                        for v in matches.get_many::<$t>(tag).unwrap() {
+                        for v in matches.get_many::<$t>(tag.as_str()).unwrap() {
                             set(args, *v).map_err(ExecError::set_arg)?
                         }
                         Ok(())
